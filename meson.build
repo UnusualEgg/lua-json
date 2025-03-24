@@ -1,6 +1,6 @@
 project('lua-json', 'c', version: '0.1', default_options: ['warning_level=3'])
 
-luaib = dependency('Lua')
+luaib = dependency('lua-5.3')
 json = subproject('json-c')
 jsondep = json.get_variable('json_lib')
 incdir = include_directories(['inc'])
