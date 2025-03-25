@@ -1,10 +1,10 @@
 #include "hashmap.h"
-#include "luaconf.h"
 #include <json.h>
 #include <lua.h>
 #include <lua5.3/lauxlib.h>
 #include <lua5.3/lua.h>
 #include <lua5.3/lualib.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,16 +59,14 @@ static int free_json_obj(lua_State *L) {
     free_object(j);
     return 0;
 }
-static int get_str(lua_State *L) {
-    struct jvalue *j = checkval(L);
+static int get_str_j(lua_State *L,struct jvalue *j) {
     if (j->type != JSTR) {
         luaL_error(L, "expected Str but got %s\n", type_to_str(j->type));
     }
     lua_pushstring(L, j->val.str);
     return 1;
 }
-static int get_num(lua_State *L) {
-    struct jvalue *j = checkval(L);
+static int get_num_j(lua_State *L, struct jvalue *j) {
     if (j->type != JNUMBER) {
         luaL_error(L, "expected Number but got %s\n", type_to_str(j->type));
     }
@@ -79,15 +77,13 @@ static int get_num(lua_State *L) {
     }
     return 1;
 }
-static int get_bool(lua_State *L) {
-    struct jvalue *j = checkval(L);
+static int get_bool_j(lua_State *L, struct jvalue *j) {
     if (j->type != JBOOL) {
         luaL_error(L, "expected Bool but got %s\n", type_to_str(j->type));
     }
     lua_pushboolean(L, j->val.boolean);
     return 1;
 }
-// TODO maybe just do get_* including get_any then convert lua tyeps to json types
 static int get(lua_State *L) {
     struct jvalue *j = checkval(L);
     const char *key = luaL_checkstring(L, 2);
@@ -122,7 +118,6 @@ static int get_i(lua_State *L) {
     push_jval(L, new_copy);
     return 1;
 }
-// TODO
 static int get_any_j(lua_State *L, struct jvalue *j);
 static int get_obj_j(lua_State *L, struct jvalue *j) {
     lua_newtable(L);
@@ -131,10 +126,18 @@ static int get_obj_j(lua_State *L, struct jvalue *j) {
         // k
         lua_pushstring(L, pair->key);
         // v
+        printf("pair->val:");
+        print_value(pair->val);
+        printf("\n");
         get_any_j(L, pair->val);
         // table[k]=v
         lua_settable(L, -3);
     }
+    lua_pushvalue(L, -1);
+    luaL_newmetatable(L, "json.obj");
+    lua_pushboolean(L, true);
+    lua_setfield(L, -1, "__isarray");
+    //todo
     return 1;
 }
 static int get_arr_j(lua_State *L, struct jvalue *j) {
@@ -156,13 +159,14 @@ static int get_any_j(lua_State *L, struct jvalue *j) {
             break;
         }
         case JNUMBER: {
-            return get_num(L);
+            return get_num_j(L,j);
         }
         case JBOOL: {
-            return get_bool(L);
+            return get_bool_j(L,j);
         }
         case JSTR: {
-            return get_str(L);
+            printf("is string + %d %s\n",j->type,type_to_str(j->type));
+            return get_str_j(L,j);
         }
         case JNULL: {
             lua_pushnil(L);
@@ -189,9 +193,20 @@ static int get_arr(lua_State *L) {
     struct jvalue *j = checkval(L);
     return get_arr_j(L, j);
 }
-static int lua_to_jvalue(lua_State *L) {
-    struct jvalue *j = malloc(sizeof(struct jvalue));
-    int type = lua_type(L, 1);
+static int get_str(lua_State *L) {
+    struct jvalue *j = checkval(L);
+    return get_str_j(L, j);
+}
+static int get_num(lua_State *L) {
+    struct jvalue *j = checkval(L);
+    return get_num_j(L, j);
+}
+static int get_bool(lua_State *L) {
+    struct jvalue *j = checkval(L);
+    return get_bool_j(L, j);
+}
+static void lua_to_jvalue_j(lua_State *L, int idx,struct jvalue *j) {
+    int type = lua_type(L, idx);
     switch (type) {
         case LUA_TNIL: {
             j->type = JNULL;
@@ -199,30 +214,79 @@ static int lua_to_jvalue(lua_State *L) {
         }
         case LUA_TNUMBER: {
             j->type = JNUMBER;
-            j->val.number.islong = lua_isinteger(L, 1);
+            j->val.number.islong = lua_isinteger(L, idx);
             if (j->val.number.islong) {
-                j->val.number.num.l = luaL_checkinteger(L, 1);
+                j->val.number.num.l = luaL_checkinteger(L, idx);
             } else {
-                j->val.number.num.l = luaL_checknumber(L, 1);
+                j->val.number.num.l = luaL_checknumber(L, idx);
             }
+            break;
+        }
+        case LUA_TBOOLEAN: {
+            j->type=JBOOL;
+            j->val.boolean=lua_toboolean(L, idx);
             break;
         }
         case LUA_TTABLE: {
             // check metatable.__isarray
-            int isarray_type = luaL_getmetafield(L, 1, "__isarray");
+            int isarray_type = luaL_getmetafield(L, idx, "__isarray");
             if (isarray_type == LUA_TNIL) {
                 luaL_argerror(L, 1, "expected to have metatable and __isarray");
             }
             bool isarray = lua_toboolean(L, -1);
-            // TODO
+            if (isarray) {
+                j->type=JARRAY;
+                
+                lua_len(L, idx);
+                size_t len = lua_tonumber(L, -1);
+                
+                for (size_t i=0;i<len;i++) {
+                    int elm_type = lua_gettable(L, i);
+                    if (elm_type==LUA_TNIL) break;
+                    struct jvalue *new_element = malloc(sizeof(struct jvalue));
+                    lua_to_jvalue_j(L, -1, new_element);
+                    j->val.array.arr[i]=new_element;
+                }
+                
+            } else {
+                j->type = JOBJECT;
+
+                lua_pushnil(L);
+                while (lua_next(L, 1)!=0) {
+                    size_t len=0;
+                    const char* key = luaL_checklstring(L, -2, &len);
+                    struct jvalue *new_element = malloc(sizeof(struct jvalue));
+                    lua_to_jvalue_j(L, -1, new_element);
+                    jobj_set(j, key, new_element);
+                }
+            }
+            break;
+        }
+        case LUA_TLIGHTUSERDATA:case LUA_TUSERDATA:case LUA_TTHREAD: {
+            luaL_error(L, "Expected compatible jvalue lua type but got %s\n",lua_typename(L, type));
         }
     }
+}
+static int lua_to_jvalue(lua_State *L) {
+    struct jvalue *j = malloc(sizeof(struct jvalue));
+    lua_to_jvalue_j(L, 1, j);
+    push_jval(L, j);
+    return 1;
+}
+static int jvalue_to_str(lua_State *L) {
+    struct jvalue *j = checkval(L);
+    char* s = sprint_value_normal(j);
+    lua_pushstring(L, s);
+    free(s);
+    return 1;
 }
 
 static const struct luaL_Reg json[] = {
     {"add", add},
     {"hello", hello},
     {"load", load},
+    // lua -> jvalue
+    {"lua_to_jvalue",lua_to_jvalue},
     {NULL, NULL},
 };
 static const struct luaL_Reg json_meta[] = {
@@ -238,7 +302,7 @@ static const struct luaL_Reg json_meta[] = {
     // index functuons
     {"get", get},
     {"get_i", get_i},
-    // lua -> jvalue
+    {"__tostring",jvalue_to_str},
     {
         NULL,
         NULL,
