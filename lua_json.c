@@ -299,7 +299,8 @@ static void lua_to_jvalue_j(lua_State *L, int idx, struct jvalue *j) {
                     print_value(new_element);
                     printf("| new element\n");
                     jobj_set(j, key, new_element);
-                    printf("jobj_set\n");
+                    print_value(j);
+                    printf("|jobj_set\n");
                     // pop value
                     lua_pop(L, 1);
                     const char *key_after = luaL_checklstring(L, -1, &len);
