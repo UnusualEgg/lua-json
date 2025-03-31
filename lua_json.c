@@ -136,26 +136,18 @@ static int get_i(lua_State *L) {
 static int get_any_j(lua_State *L, struct jvalue *j);
 static int get_obj_j(lua_State *L, struct jvalue *j) {
     lua_newtable(L);
-    printf("len:%zu\n", j->val.obj->len);
     struct hashmap_node *n = NULL;
     for (size_t i = 0; i < j->val.obj->len; i++) {
-        printf("getting pair\n");
         if (!n) {
             n = j->val.obj->nodes;
         }
         struct key_pair *pair = n->val;
         // v
-        printf("%s:", pair->key);
-        print_value(pair->val);
-        printf("\n");
         get_any_j(L, pair->val);
-        printf("get_any_j\n");
         // table[k]=v
         lua_setfield(L, -2, pair->key);
-        printf("setfield\n");
         n = n->next;
     }
-    printf("set main part of obj\n");
     lua_newtable(L);
     lua_pushboolean(L, false);
     lua_setfield(L, -2, "__isarray");
@@ -233,7 +225,7 @@ static int get_bool(lua_State *L) {
 }
 static void lua_to_jvalue_j(lua_State *L, int idx, struct jvalue *j) {
     int type = lua_type(L, idx);
-    printf("type:%s at %d\n", lua_typename(L, type), idx);
+    // printf("[lua_to_jvalue_j]type:%s at %d\n", lua_typename(L, type), idx);
     switch (type) {
         case LUA_TNIL: {
             j->type = JNULL;
@@ -258,7 +250,7 @@ static void lua_to_jvalue_j(lua_State *L, int idx, struct jvalue *j) {
         case LUA_TSTRING: {
             j->type = JSTR;
             j->val.str = strdup(luaL_checkstring(L, idx));
-            printf("made string\n");
+            // printf("made string\n");
             break;
         }
         case LUA_TTABLE: {
@@ -268,7 +260,7 @@ static void lua_to_jvalue_j(lua_State *L, int idx, struct jvalue *j) {
                 luaL_argerror(L, 1, "expected to have metatable and __isarray");
             }
             bool isarray = lua_toboolean(L, -1);
-            printf("isarray: %s\n", isarray ? "true" : "false");
+            // printf("isarray: %s\n", isarray ? "true" : "false");
             lua_pop(L, 1);
             if (isarray) {
                 j->type = JARRAY;
@@ -291,19 +283,14 @@ static void lua_to_jvalue_j(lua_State *L, int idx, struct jvalue *j) {
 
                 lua_pushnil(L);
                 while (lua_next(L, 1) != 0) {
+                    // stack: -2:key -1:value
                     size_t len = 0;
                     const char *key = luaL_checklstring(L, -2, &len);
-                    printf("key:%s\n", key);
                     struct jvalue *new_element = malloc(sizeof(struct jvalue));
                     lua_to_jvalue_j(L, lua_gettop(L), new_element);
-                    print_value(new_element);
-                    printf("| new element\n");
                     jobj_set(j, key, new_element);
-                    printf("jobj_set\n");
                     // pop value
                     lua_pop(L, 1);
-                    const char *key_after = luaL_checklstring(L, -1, &len);
-                    printf("key_after:%s\n", key_after);
                 }
             }
             break;
@@ -316,6 +303,9 @@ static void lua_to_jvalue_j(lua_State *L, int idx, struct jvalue *j) {
                        lua_typename(L, type));
         }
     }
+    printf("[lua_to_jvalue_j] done: ");
+    print_value(j);
+    printf("\n");
 }
 static int lua_to_jvalue(lua_State *L) {
     // FIXME
@@ -329,7 +319,7 @@ static int lua_to_jvalue(lua_State *L) {
 static int jvalue_to_str(lua_State *L) {
     struct jvalue *j = checkval(L);
     char *s = sprint_value_normal(j);
-    printf("new jvalue to str: %s\n", s);
+    // printf("[jvalue_to_str]: %s\n", s);
     lua_pushstring(L, s);
     free(s);
     return 1;
